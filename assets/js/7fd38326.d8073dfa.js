@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkdocs=self.webpackChunkdocs||[]).push([[988],{4410:e=>{e.exports=JSON.parse('{"sourceUrl":"https://github.com/Qxshio/DataService/blob/master","baseUrl":"/DataService/","classOrder":[],"apiCategories":[]}')}}]);
