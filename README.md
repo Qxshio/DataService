@@ -1,4 +1,5 @@
 # DataService
+[![Docs](https://img.shields.io/badge/docs-website-green.svg)](https://qxshio.github.io/DataService)
 DataService server handles all backend datastore setup + saving and enables replication to the client
 
 ## Getting Started
