@@ -27,12 +27,25 @@ local DataService = {
 }
 
 --[=[
+@type templateOption { value: any, readonly: boolean?, createLeaderstat: { Name: string, Format: (Value: any) -> string }?, whitelisted: boolean?, savingEnabled: boolean? }
+@within DataService
+The options to provide in the template
+]=]
+export type templateOptions = {
+	value: any,
+	readonly: boolean?,
+	createLeaderstat: { Name: string, Format: (Value: any) -> string }?,
+	whitelisted: boolean?,
+	savingEnabled: boolean?,
+}
+
+--[=[
 @type DataServiceOptions {  template: { [string]: any },  Whitelist: { any }?,  enforceReferentialIntegrity: ((Player) -> ())?,  useMock: boolean?,  yieldFunctionsUntilLoaded: boolean? }
 @within DataService
 The options to provide in the :init() function
 ]=]
 export type DataServiceOptions = {
-	template: { [string]: any },
+	template: { [string]: templateOptions },
 	Whitelist: { any }?,
 	Blacklist: { any }?,
 	enforceReferentialIntegrity: ((Player) -> ())?,
@@ -49,6 +62,80 @@ local function Debug(Message: string, Method: any)
 end
 
 --[=[
+Recursively processes a data template to extract and store whitelisted paths and leaderstat settings.
+Modifies the template in-place by replacing template option tables with their `.value` fields.
+
+@param template {} -- The nested table structure defining data schema and metadata (e.g., whitelisted, leaderstats)
+@param currentPath string? -- (Optional) The current string path used during recursion
+
+@ignore
+@within DataService
+@return nil
+]=]
+function DataService:_constructData(template: {}, currentPath: string?)
+	for i, v in template do
+		local stringPath = (currentPath and currentPath .. "." .. i) or i
+		if typeof(v) == "table" and not v.value then
+			self:_constructData(v, stringPath)
+			continue
+		end
+		assert(
+			typeof(v) == "table",
+			Util.STANDARD_ERR .. "Provided template option does not follow the format of type `templateOption` (docs)"
+		)
+
+		if v.whitelisted == true then
+			table.insert(self.Whitelist, stringPath)
+		end
+		if v.createLeaderstat then
+			local Settings = v.createLeaderstat
+			Settings.stringPath = stringPath
+			self._leaderstats = self._leaderstats or {}
+			self._leaderstats[i] = Settings
+		end
+		if v.savingEnabled == false then
+			self.mockTemplate[i] = v.value
+			template[i] = nil
+			return
+		end
+
+		template[i] = v.value
+	end
+end
+
+--[=[
+Creates or updates the "leaderstats" folder for a player based on configured leaderstat settings.
+Fetches values from the player's data and applies optional formatting before assigning them to leaderstats.
+
+@param Player Player -- The player for whom leaderstats should be created or updated
+
+@ignore
+@within DataService
+@return nil
+]=]
+function DataService:_buildLeaderstats(Player: Player)
+	local leaderstats = Player:FindFirstChild("leaderstats")
+	if not leaderstats then
+		leaderstats = Instance.new("Folder")
+		leaderstats.Name = "leaderstats"
+		leaderstats.Parent = Player
+	end
+
+	for _, Settings: {} in self._leaderstats do
+		local value = self:fetch(Player, Settings.stringPath)
+		local formattedValue: string = Settings.Format and Settings.Format(value) or value
+
+		local stat = leaderstats:FindFirstChild(Settings.Name)
+		if not stat then
+			stat = Instance.new("StringValue")
+			stat.Name = Settings.Name
+			stat.Parent = leaderstats
+		end
+		stat.Value = tostring(formattedValue)
+	end
+end
+
+--[=[
 Initializes the service and sets up key prerequisites to use in later functions. Must be called from a server-script
 
 @within DataService
@@ -59,10 +146,11 @@ function DataService:init(options: DataServiceOptions): ()
 	assert(RunService:IsServer(), Util.STANDARD_ERR .. "DataService.Server can only be ran on the server")
 	assert(options and typeof(options) == "table", Util.STANDARD_ERR .. "No options provided")
 
-	self.Whitelist = options.Whitelist
-	self.Blacklist = options.Blacklist
+	self.Whitelist = options.Whitelist or {}
+	self.mockTemplate = options.mockTemplate or {}
+	self:_constructData(options.template)
 
-	self.Relay = Relay.server.new("DataService@1.0", self, options.Whitelist, options.Blacklist) :: typeof(Relay.server)
+	self.Relay = Relay.server.new("DataService@1.0", self, options.Whitelist, options.Blacklist)
 	self.Relay.Module = self
 	if options.enforceReferentialIntegrity then
 		self.Relay:enforceReferentialIntegrity(options.enforceReferentialIntegrity)
@@ -97,17 +185,19 @@ If player data hasn't loaded yet, function will yield until their data is loaded
 @param Player Player? -- The player who's data you want to retrieve
 
 @within DataService
-@return {}
+@return {}, {} -- Live, Mock
 ]=]
 function DataService:getData(Player: Player?): { any }
-	local profile = self._profiles[tostring(Player.UserId)]
-	local data = (profile and (Player and self._profiles[tostring(Player.UserId)].Data)) or self._profiles
-	if (Sift.Dictionary.count(data) < 1) and self.yieldGetReq then
-		task.wait()
-		return self:getData(Player)
+	if Player then
+		local data = self._profiles[`{Player.UserId}`]
+		if (Sift.Dictionary.count(data) < 1) and self.yieldGetReq then
+			task.wait()
+			return self:getData(Player)
+		end
+		return data.live, data.mock
+	else
+		return self._profiles
 	end
-
-	return data
 end
 
 --[=[
@@ -120,8 +210,12 @@ Fetches the value at the given string path from a player's data.
 @return any -- The value retrieved from the specified path in the player's data
 ]=]
 function DataService:fetch(Player: Player, stringPath: string)
-	local data = self:getData(Player)
-	local path, lastKey = Relay.util:getIndexValueFromString(stringPath, data)
+	local data, mock = self:getData(Player)
+	local path, lastKey = Relay.util:getIndexValueFromString(stringPath, data.Data)
+	if not path[lastKey] then
+		print(mock)
+		path, lastKey = Relay.util:getIndexValueFromString(stringPath, mock.Data)
+	end
 	return path[lastKey]
 end
 
@@ -167,15 +261,29 @@ local Cash = DataService:fetch(Player, "Cash") -- 250
 DataService:setData(Player, "Cash", Cash * 2)
 print(DataService:fetch(Player, "Cash")) -- 500
 ```
+OR
+```lua
+DataService:setData(Player, "Cash", function(OldCash: any)
+	return OldCash * 2
+end) -- 500
+```
 
 @param Player Player | { Player } -- The player(s) who's data you want modify
 @param stringPath string -- The string path of the index you want to modify e.g. ``Settings.MaxVolume``
-@param value any -- The value you want to modify the index(s) with
+@param value any -- The value or function you want to modify the index with
+@param useMock boolean? -- Whether or not the function should ONLY set the value in the mock data, otherwise both live and mock will be updated
+@param fromClient boolean? -- Whether or not security should be enabled, this should only be used if you're using client data to determine value allocation
 
 @within DataService
 @return ()
 ]=]
-function DataService:setData(Player: Player, stringPath: string, value: any): ()
+function DataService:setData(
+	Player: Player,
+	stringPath: string,
+	value: any,
+	useMock: boolean?,
+	fromClient: boolean?
+): ()
 	if typeof(Player) == "Instance" then
 		Player = { Player }
 	end
@@ -183,10 +291,20 @@ function DataService:setData(Player: Player, stringPath: string, value: any): ()
 		self.Relay.Whitelist = self:_updateListForPlayer(Plr, self.Whitelist)
 		self.Relay.Blacklist = self:_updateListForPlayer(Plr, self.Blacklist)
 		self:awaitPlayerDataAsync(Plr)
-		local path = Util:getDataStringPath(Plr) .. "." .. stringPath
+		local path = Util:getDataStringPath(Plr, useMock) .. "." .. stringPath
 
-		local result = self.Relay:setValueFromStringIndex(Plr, path, value)
+		if typeof(value) == "function" then
+			local lastValue = self:fetch(Plr, path)
+			value = value(lastValue)
+		end
+
+		if not useMock then
+			local mockPath = Util:getDataStringPath(Plr, true) .. "." .. stringPath
+			self.Relay:setValueFromStringIndex(Plr, mockPath, value, fromClient)
+		end
+		local result = self.Relay:setValueFromStringIndex(Plr, path, value, fromClient)
 		if result then
+			self:_buildLeaderstats(Plr)
 			local clientPath = Util.Enums.LOCAL_PATH .. "." .. stringPath
 			self.Relay:set(Plr, clientPath, value)
 		end
@@ -228,7 +346,16 @@ function DataService:setAllDataExcept(Player: Player | { Player }, stringPath: s
 	end
 end
 
-function DataService:removeDataAsync(UserID: number)
+--[=[
+Removes a player's data from the profile store using their UserId.
+Primarily used for data wipes or resets. Only allowed in studio.
+
+@param UserID number -- The UserId of the player whose data should be removed
+
+@error RUN_ERR -- Occurs if game instance is running
+@return nil
+]=]
+function DataService:removeData(UserID: number)
 	assert(RunService:IsRunning(), Util.RUN_ERR)
 
 	ProfileStore:RemoveAsync(UserID)
@@ -269,6 +396,8 @@ function DataService:_playerAdded(Player: Player)
 			return Player.Parent ~= Players
 		end,
 	})
+	local mockProfile = self._profileStore.Mock:StartSessionAsync(`{Player.UserId}`)
+	local mockData = Sift.Dictionary.mergeDeep(mockProfile, self.mockTemplate)
 
 	if profile then
 		profile:AddUserId(Player.UserId)
@@ -281,10 +410,12 @@ function DataService:_playerAdded(Player: Player)
 
 		if not (Player.Parent == Players) then
 			profile:EndSession()
+			mockProfile:EndSession()
 		else
 			Debug(`Successfully loaded {Player.Name}'s data`)
-			self._profiles[tostring(Player.UserId)] = profile
-			self.Relay:fire(Player, "SyncData", profile.Data)
+			self._profiles[tostring(Player.UserId)] = { live = profile, mock = mockData }
+			self:_buildLeaderstats(Player)
+			self.Relay:fire(Player, "SyncData", profile.Data, mockProfile.Data)
 		end
 	else
 		Player:Kick("Failed to load data, this is likely a ROBLOX issue - please rejoin")
@@ -301,9 +432,14 @@ Attempts to save player data
 ]=]
 function DataService:_playerRemoving(Player: Player)
 	local profile = self._profiles[tostring(Player.UserId)]
-	if profile then
+	if not profile then
+		return
+	end
+	local _, live = profile.mock, profile.live
+	print(profile)
+	if live then
 		Debug("Player data saved")
-		profile:EndSession()
+		live:EndSession()
 	end
 end
 
