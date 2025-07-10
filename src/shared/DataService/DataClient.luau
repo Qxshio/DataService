@@ -23,7 +23,6 @@ Utility function to log debug messages using a specified output method.
 @param Message string -- The debug message to output
 @param Method any? -- (Optional) A custom method to handle the message output; defaults to `print`
 
-@within DataServiceClient
 @ignore
 @return nil
 ]=]
@@ -37,7 +36,6 @@ Constructs the full server-side data path for the local player by appending a re
 
 @param stringPath string -- The relative string path to append to the player's data path
 
-@within DataServiceClient
 @ignore
 @return string -- The full string path used to access the player's data on the server
 ]=]
@@ -72,14 +70,13 @@ end
 Synchronizes the client's local profile data with new data from the server.
 ⚠️ This function should NOT be used as it is called automatically when the player joins.
 
-@param Data {} -- The new data to sync with the client's profile
+@param newData {} -- The new data to sync with the client's profile
 
 @within DataServiceClient
 @return nil
 ]=]
 function DataServiceClient:SyncData(Data: {})
 	Debug("Successfully synced server data with the client")
-	print(Data)
 	self._profile = Data
 	self.started = true
 end
