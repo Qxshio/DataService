@@ -5,6 +5,8 @@ local RunService = game:GetService("RunService")
 local Relay = require(ReplicatedStorage.Shared.Relay)
 local Util = require(script.Parent.DataUtil)
 
+local Sift = require(ReplicatedStorage.Packages.Sift)
+
 --[=[
 DataService client handles syncing data with the client and providing useful tools to detect changes in data etc
 
@@ -77,9 +79,9 @@ Synchronizes the client's local profile data with new data from the server.
 @within DataServiceClient
 @return nil
 ]=]
-function DataServiceClient:SyncData(Data: {})
+function DataServiceClient:SyncData(mockData: {})
 	Debug("Successfully synced server data with the client")
-	self._profile = Data
+	self._profile = mockData
 	self.started = true
 end
 

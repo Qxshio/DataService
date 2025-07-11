@@ -11,6 +11,7 @@ end
 local Relay = require(ReplicatedStorage.Shared.Relay)
 local Util = require(script.Parent.DataUtil)
 local Sift = require(script.Parent.Packages.Sift)
+local Signal = require(script.Parent.Packages.Signal)
 
 --[=[
 DataService server handles all backend datastore setup and enables replication to the client
@@ -27,19 +28,20 @@ local DataService = {
 }
 
 --[=[
-@type templateOption {  value: any,  createLeaderstat: { Name: string, Format: (Value: any) -> string }? -- Creates a ROBLOX leaderstat stringvalue that can be formatted via Format(OldValue),  whitelisted: boolean? -- Whether or not the client can modify this value,  savingEnabled: boolean? -- Whether or not the value is ONLY in the mock profile and not in the live profile }
+@type templateOption { value: any, readonly: boolean?, createLeaderstat: { Name: string, Format: (Value: any) -> string }?, whitelisted: boolean?, savingEnabled: boolean? }
 @within DataService
 The options to provide in the template
 ]=]
 export type templateOptions = {
 	value: any,
+	readonly: boolean?,
 	createLeaderstat: { Name: string, Format: (Value: any) -> string }?,
 	whitelisted: boolean?,
 	savingEnabled: boolean?,
 }
 
 --[=[
-@type DataServiceOptions {  template: { [string]: templateOptions },  enforceReferentialIntegrity: ((Player) -> ())? -- (Security option) When set, prevents client from changing value's type with a different type and calls the function,  useMock: boolean?,  yieldFunctionsUntilLoaded: boolean? }
+@type DataServiceOptions {  template: { [string]: any },  Whitelist: { any }?,  enforceReferentialIntegrity: ((Player) -> ())?,  useMock: boolean?,  yieldFunctionsUntilLoaded: boolean? }
 @within DataService
 The options to provide in the :init() function
 ]=]
@@ -95,7 +97,7 @@ function DataService:_constructData(template: {}, currentPath: string?)
 		if v.savingEnabled == false then
 			self.mockTemplate[i] = v.value
 			template[i] = nil
-			return
+			continue
 		end
 
 		template[i] = v.value
@@ -113,6 +115,9 @@ Fetches values from the player's data and applies optional formatting before ass
 @return nil
 ]=]
 function DataService:_buildLeaderstats(Player: Player)
+	if not self._leaderstats then
+		return
+	end
 	local leaderstats = Player:FindFirstChild("leaderstats")
 	if not leaderstats then
 		leaderstats = Instance.new("Folder")
@@ -147,6 +152,7 @@ function DataService:init(options: DataServiceOptions): ()
 
 	self.Whitelist = options.Whitelist or {}
 	self.mockTemplate = options.mockTemplate or {}
+	self._changedSignals = {}
 	self:_constructData(options.template)
 
 	self.Relay = Relay.server.new("DataService@1.0", self, options.Whitelist, options.Blacklist)
@@ -156,7 +162,9 @@ function DataService:init(options: DataServiceOptions): ()
 	end
 
 	assert(options.template, Util.STANDARD_ERR .. "Template is nil")
-	self._profileStore = ProfileStore.New("PlayerStore", options.template)
+
+	self._profileStore = ProfileStore.New("DataServerStore", options.template)
+	print(self._profileStore)
 	self.yieldGetReq = options.yieldFunctionsUntilLoaded or true
 
 	if options.useMock then
@@ -184,19 +192,34 @@ If player data hasn't loaded yet, function will yield until their data is loaded
 @param Player Player? -- The player who's data you want to retrieve
 
 @within DataService
-@return {}, {} -- Live, Mock
+@return {}
 ]=]
 function DataService:getData(Player: Player?): { any }
 	if Player then
-		local data = self._profiles[`{Player.UserId}`]
+		local data = self._profiles[`{Player.UserId}`] or {}
 		if (Sift.Dictionary.count(data) < 1) and self.yieldGetReq then
 			task.wait()
 			return self:getData(Player)
 		end
-		return data.live, data.mock
+		return data.mock
 	else
 		return self._profiles
 	end
+end
+
+--[=[
+Retrieves and/or creates a Signal that is fired whenever the provided key's value changes
+@param key string -- The value to listen to, should it be changed
+
+@within DataService
+@return Signal
+]=]
+function DataService:getServerChangedSignal<T>(key: string)
+	if not self._changedSignals[key] then
+		self._changedSignals[key] = Signal.new()
+	end
+
+	return self._changedSignals[key] :: Signal.Signal<T>
 end
 
 --[=[
@@ -209,13 +232,10 @@ Fetches the value at the given string path from a player's data.
 @return any -- The value retrieved from the specified path in the player's data
 ]=]
 function DataService:fetch(Player: Player, stringPath: string)
-	local data, mock = self:getData(Player)
-	local path, lastKey = Relay.util:getIndexValueFromString(stringPath, data.Data)
-	if not path[lastKey] then
-		print(mock)
-		path, lastKey = Relay.util:getIndexValueFromString(stringPath, mock.Data)
-	end
-	return path[lastKey]
+	local mockPath = Util:getDataStringPath(Player, true) .. "." .. stringPath
+	local path, lastKey = Relay.util:getIndexValueFromString(mockPath, self)
+
+	return path and path[lastKey]
 end
 
 --[=[
@@ -246,6 +266,7 @@ function DataService:_updateListForPlayer(Player: Player, list: {})
 	for i, stringPath in ipairs(copy) do
 		if typeof(stringPath) == "string" then
 			copy[i] = Util:getDataStringPath(Player) .. "." .. stringPath
+			copy[i] = Util:getDataStringPath(Player, true) .. "." .. stringPath
 		end
 	end
 	return copy
@@ -270,7 +291,7 @@ end) -- 500
 @param Player Player | { Player } -- The player(s) who's data you want modify
 @param stringPath string -- The string path of the index you want to modify e.g. ``Settings.MaxVolume``
 @param value any -- The value or function you want to modify the index with
-@param useMock boolean? -- Whether or not the function should ONLY set the value in the mock data, otherwise both live and mock will be updated
+@param useMock boolean? -- Whether or not the function should set the value in the mock data only
 @param fromClient boolean? -- Whether or not security should be enabled, this should only be used if you're using client data to determine value allocation
 
 @within DataService
@@ -290,19 +311,26 @@ function DataService:setData(
 		self.Relay.Whitelist = self:_updateListForPlayer(Plr, self.Whitelist)
 		self.Relay.Blacklist = self:_updateListForPlayer(Plr, self.Blacklist)
 		self:awaitPlayerDataAsync(Plr)
-		local path = Util:getDataStringPath(Plr, useMock) .. "." .. stringPath
+		local mockPath = Util:getDataStringPath(Plr, true) .. "." .. stringPath
+		local lastValue = self:fetch(Plr, stringPath)
 
 		if typeof(value) == "function" then
-			local lastValue = self:fetch(Plr, path)
 			value = value(lastValue)
 		end
 
-		if not useMock then
-			local mockPath = Util:getDataStringPath(Plr, true) .. "." .. stringPath
-			self.Relay:setValueFromStringIndex(Plr, mockPath, value, fromClient)
+		local result
+		if useMock then
+			result = self.Relay:setValueFromStringIndex(Plr, mockPath, value, fromClient)
+		else
+			local path = Util:getDataStringPath(Plr) .. "." .. stringPath
+			result = self.Relay:setValueFromStringIndex(Plr, path, value, fromClient)
+
+			self.Relay:setValueFromStringIndex(Plr, mockPath, value, fromClient) -- sync with mock
 		end
-		local result = self.Relay:setValueFromStringIndex(Plr, path, value, fromClient)
 		if result then
+			if self._changedSignals[mockPath] then
+				self._changedSignals[mockPath]:Fire(lastValue, value)
+			end
 			self:_buildLeaderstats(Plr)
 			local clientPath = Util.Enums.LOCAL_PATH .. "." .. stringPath
 			self.Relay:set(Plr, clientPath, value)
@@ -347,17 +375,16 @@ end
 
 --[=[
 Removes a player's data from the profile store using their UserId.
-Primarily used for data wipes or resets. Only allowed in studio.
 
 @param UserID number -- The UserId of the player whose data should be removed
 
-@error RUN_ERR -- Occurs if game instance is running
+@error RUN_ERR -- Occurs if game instance isn't running on studio
 @return nil
 ]=]
 function DataService:removeData(UserID: number)
-	assert(RunService:IsRunning(), Util.RUN_ERR)
+	assert(RunService:IsStudio() and RunService:IsRunning(), Util.RUN_ERR)
 
-	ProfileStore:RemoveAsync(UserID)
+	self._profileStore:RemoveAsync(UserID)
 	Debug("Removed data")
 end
 
@@ -396,7 +423,7 @@ function DataService:_playerAdded(Player: Player)
 		end,
 	})
 	local mockProfile = self._profileStore.Mock:StartSessionAsync(`{Player.UserId}`)
-	local mockData = Sift.Dictionary.mergeDeep(mockProfile, self.mockTemplate)
+	local mockData = Sift.Dictionary.mergeDeep(mockProfile.Data, self.mockTemplate)
 
 	if profile then
 		profile:AddUserId(Player.UserId)
@@ -414,7 +441,7 @@ function DataService:_playerAdded(Player: Player)
 			Debug(`Successfully loaded {Player.Name}'s data`)
 			self._profiles[tostring(Player.UserId)] = { live = profile, mock = mockData }
 			self:_buildLeaderstats(Player)
-			self.Relay:fire(Player, "SyncData", profile.Data, mockProfile.Data)
+			self.Relay:fire(Player, "SyncData", mockProfile.Data)
 		end
 	else
 		Player:Kick("Failed to load data, this is likely a ROBLOX issue - please rejoin")
@@ -434,8 +461,7 @@ function DataService:_playerRemoving(Player: Player)
 	if not profile then
 		return
 	end
-	local _, live = profile.mock, profile.live
-	print(profile)
+	local _, live = nil, profile.live
 	if live then
 		Debug("Player data saved")
 		live:EndSession()
