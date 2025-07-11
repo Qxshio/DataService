@@ -74,7 +74,7 @@ end
 Synchronizes the client's local profile data with new data from the server.
 ⚠️ This function should NOT be used as it is called automatically when the player joins.
 
-@param Data {} -- The new data to sync with the client's profile
+@param mockData {} -- The new data to sync with the client's profile
 
 @within DataServiceClient
 @return nil

@@ -232,6 +232,7 @@ Fetches the value at the given string path from a player's data.
 @return any -- The value retrieved from the specified path in the player's data
 ]=]
 function DataService:fetch(Player: Player, stringPath: string)
+	self:awaitPlayerDataAsync(Player)
 	local mockPath = Util:getDataStringPath(Player, true) .. "." .. stringPath
 	local path, lastKey = Relay.util:getIndexValueFromString(mockPath, self)
 
@@ -329,7 +330,7 @@ function DataService:setData(
 		end
 		if result then
 			if self._changedSignals[mockPath] then
-				self._changedSignals[mockPath]:Fire(lastValue, value)
+				self._changedSignals[mockPath]:Fire(Player, lastValue, value)
 			end
 			self:_buildLeaderstats(Plr)
 			local clientPath = Util.Enums.LOCAL_PATH .. "." .. stringPath
