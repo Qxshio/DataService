@@ -27,20 +27,19 @@ local DataService = {
 }
 
 --[=[
-@type templateOption { value: any, readonly: boolean?, createLeaderstat: { Name: string, Format: (Value: any) -> string }?, whitelisted: boolean?, savingEnabled: boolean? }
+@type templateOption {  value: any,  createLeaderstat: { Name: string, Format: (Value: any) -> string }? -- Creates a ROBLOX leaderstat stringvalue that can be formatted via Format(OldValue),  whitelisted: boolean? -- Whether or not the client can modify this value,  savingEnabled: boolean? -- Whether or not the value is ONLY in the mock profile and not in the live profile }
 @within DataService
 The options to provide in the template
 ]=]
 export type templateOptions = {
 	value: any,
-	readonly: boolean?,
 	createLeaderstat: { Name: string, Format: (Value: any) -> string }?,
 	whitelisted: boolean?,
 	savingEnabled: boolean?,
 }
 
 --[=[
-@type DataServiceOptions {  template: { [string]: any },  Whitelist: { any }?,  enforceReferentialIntegrity: ((Player) -> ())?,  useMock: boolean?,  yieldFunctionsUntilLoaded: boolean? }
+@type DataServiceOptions {  template: { [string]: templateOptions },  enforceReferentialIntegrity: ((Player) -> ())? -- (Security option) When set, prevents client from changing value's type with a different type and calls the function,  useMock: boolean?,  yieldFunctionsUntilLoaded: boolean? }
 @within DataService
 The options to provide in the :init() function
 ]=]

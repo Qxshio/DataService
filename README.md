@@ -29,7 +29,7 @@ local DataService = require(path.to.require)
 
 DataService.server:init({
 	template = {
-		Cash = 0,
+		Cash = {value = 0},
 		Settings = {
 			SFXVolume = 0.5,
 			UIVolume = 0.5,
