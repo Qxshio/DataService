@@ -22,7 +22,7 @@ print(getDataStringPath(Player)) -> "_profiles.414941613.live.Data"
 @return string -- The string path pointing to the player's data in the profile system
 ]=]
 function Util:getDataStringPath(Player: Player, Mock: boolean?)
-	return `_profiles.{Player.UserId}.{Mock and "mock" or "live"}`
+	return `_profiles.{Player.UserId}.{Mock and "mock" or "live"}.Data`
 end
 
 Util.Enums = {

@@ -164,7 +164,6 @@ function DataService:init(options: DataServiceOptions): ()
 	assert(options.template, Util.STANDARD_ERR .. "Template is nil")
 
 	self._profileStore = ProfileStore.New("DataServerStore", options.template)
-	print(self._profileStore)
 	self.yieldGetReq = options.yieldFunctionsUntilLoaded or true
 
 	if options.useMock then
@@ -260,7 +259,7 @@ function DataService:awaitPlayerDataAsync(Player: Player | { Player }): ()
 end
 
 function DataService:_updateListForPlayer(Player: Player, list: {})
-	if not list then
+	if not list or Sift.Dictionary.count(list) < 1 then
 		return {}
 	end
 	local copy = table.clone(list)
@@ -270,6 +269,7 @@ function DataService:_updateListForPlayer(Player: Player, list: {})
 			copy[i] = Util:getDataStringPath(Player, true) .. "." .. stringPath
 		end
 	end
+	print(copy)
 	return copy
 end
 
@@ -425,6 +425,7 @@ function DataService:_playerAdded(Player: Player)
 	})
 	local mockProfile = self._profileStore.Mock:StartSessionAsync(`{Player.UserId}`)
 	local mockData = Sift.Dictionary.mergeDeep(mockProfile.Data, self.mockTemplate)
+	mockProfile.Data = mockData
 
 	if profile then
 		profile:AddUserId(Player.UserId)
@@ -440,7 +441,7 @@ function DataService:_playerAdded(Player: Player)
 			mockProfile:EndSession()
 		else
 			Debug(`Successfully loaded {Player.Name}'s data`)
-			self._profiles[tostring(Player.UserId)] = { live = profile, mock = mockData }
+			self._profiles[tostring(Player.UserId)] = { live = profile, mock = mockProfile }
 			self:_buildLeaderstats(Player)
 			self.Relay:fire(Player, "SyncData", mockProfile.Data)
 		end
