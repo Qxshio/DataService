@@ -213,7 +213,8 @@ Retrieves and/or creates a Signal that is fired whenever the provided key's valu
 @within DataService
 @return Signal
 ]=]
-function DataService:getServerChangedSignal<T>(key: string)
+function DataService:getServerChangedSignal<T>(player: Player, key: string)
+	key = Util:getDataStringPath(player, true) .. "." .. key
 	if not self._changedSignals[key] then
 		self._changedSignals[key] = Signal.new()
 	end
@@ -269,7 +270,6 @@ function DataService:_updateListForPlayer(Player: Player, list: {})
 			copy[i] = Util:getDataStringPath(Player, true) .. "." .. stringPath
 		end
 	end
-	print(copy)
 	return copy
 end
 
@@ -330,7 +330,7 @@ function DataService:setData(
 		end
 		if result then
 			if self._changedSignals[mockPath] then
-				self._changedSignals[mockPath]:Fire(Player, lastValue, value)
+				self._changedSignals[mockPath]:Fire(lastValue, value)
 			end
 			self:_buildLeaderstats(Plr)
 			local clientPath = Util.Enums.LOCAL_PATH .. "." .. stringPath
@@ -424,12 +424,13 @@ function DataService:_playerAdded(Player: Player)
 		end,
 	})
 	local mockProfile = self._profileStore.Mock:StartSessionAsync(`{Player.UserId}`)
-	local mockData = Sift.Dictionary.mergeDeep(mockProfile.Data, self.mockTemplate)
+	local mockData = Sift.Dictionary.mergeDeep(profile.Data, self.mockTemplate)
 	mockProfile.Data = mockData
 
 	if profile then
 		profile:AddUserId(Player.UserId)
 		profile:Reconcile()
+		mockProfile:Reconcile()
 
 		profile.OnSessionEnd:Connect(function()
 			self:cleanup()
@@ -460,13 +461,15 @@ Attempts to save player data
 ]=]
 function DataService:_playerRemoving(Player: Player)
 	local profile = self._profiles[tostring(Player.UserId)]
+	print(profile)
 	if not profile then
 		return
 	end
-	local _, live = nil, profile.live
+	local mock, live = profile.mock, profile.live
 	if live then
 		Debug("Player data saved")
 		live:EndSession()
+		mock:EndSession()
 	end
 end
 
